@@ -1,7 +1,7 @@
 const { createClient } = require('@libsql/client');
 const bcrypt = require('bcryptjs');
 
-const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'libsql://financas-silva-estersilva0410-oss.aws-sa-east-1.turso.io';
+const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || 'https://financas-silva-estersilva0410-oss.aws-sa-east-1.turso.io';
 const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTQwNzMzMTAsImlkIjoiMDFhMWI3MTctOTYwMS03MmFkLTk0OTQtZjVmNWMzNGRmNjExIiwia2lkIjoibjhicXJISU56dFgycGtGSFo5N21hN3pSdzItWDRZZlZnak9zZm1WdHl4SSIsInJpZCI6IjgzZjJjM2QxLWU0YzAtNDIwZC1hMTZhLTQyOGU0MWI1YzFjNyJ9.f6xARz5NTBNfl7QvS4O9goXg25jEQF5qczQJxx-WBJZv6-IWt9Kx_7XfNP0FP4h4_Y3s2hH1rA8XdtljNFJqBw';
 
 const db = createClient({
