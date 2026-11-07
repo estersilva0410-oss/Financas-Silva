@@ -1,6 +1,6 @@
 /**
  * FINANÇAS SILVA - Frontend Multi-usuário (Dark Mode Minimalista)
- * SQLite + Express + Session Auth
+ * Autenticação JWT Stateless (Vercel Serverless Ready) + Reatividade Dinâmica sem Reload
  */
 
 // Estado da Aplicação
@@ -80,6 +80,35 @@ function escapeHtml(str) {
 }
 
 // ----------------------------------------------------
+// GERENCIAMENTO DE TOKEN JWT & FETCH AUTENTICADO
+// ----------------------------------------------------
+function getAuthToken() {
+  return localStorage.getItem('financas_silva_jwt') || '';
+}
+
+function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem('financas_silva_jwt', token);
+  } else {
+    localStorage.removeItem('financas_silva_jwt');
+  }
+}
+
+// Fetch autenticado com envio obrigatório de Token via Header + Cookies HTTP-only
+async function authFetch(url, options = {}) {
+  options.headers = options.headers || {};
+  const token = getAuthToken();
+
+  if (token && !(options.headers instanceof Headers)) {
+    options.headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Enviar cookies para que funcione tanto via Cookie quanto via Header
+  options.credentials = 'include';
+  return fetch(url, options);
+}
+
+// ----------------------------------------------------
 // TOAST NOTIFICATIONS (DARK THEME)
 // ----------------------------------------------------
 function showToast(message, type = 'success') {
@@ -142,17 +171,21 @@ function switchView(isLoggedIn) {
 }
 
 // ----------------------------------------------------
-// AUTENTICAÇÃO E SESSÃO
+// AUTENTICAÇÃO E SESSÃO STATELESS (JWT)
 // ----------------------------------------------------
 async function checkAuthSession() {
   try {
-    const res = await fetch('/api/auth/me');
+    const res = await authFetch('/api/auth/me');
     if (res.ok) {
       const data = await res.json();
+      if (data.token) {
+        setAuthToken(data.token);
+      }
       state.currentUser = data.user;
       switchView(true);
       await initializeDashboard();
     } else {
+      setAuthToken(null);
       switchView(false);
     }
   } catch (err) {
@@ -171,7 +204,7 @@ async function handleLogin(e) {
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Acessando...</span>';
 
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await authFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -180,6 +213,9 @@ async function handleLogin(e) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Falha ao autenticar.');
 
+    if (data.token) {
+      setAuthToken(data.token);
+    }
     state.currentUser = data.user;
     showToast(`Bem-vindo(a) ao FINANÇAS SILVA, ${data.user.name}!`, 'success');
     switchView(true);
@@ -209,7 +245,7 @@ async function handleRegister(e) {
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Criando conta...</span>';
 
   try {
-    const res = await fetch('/api/auth/register', {
+    const res = await authFetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, email, password })
@@ -218,6 +254,9 @@ async function handleRegister(e) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erro ao registrar.');
 
+    if (data.token) {
+      setAuthToken(data.token);
+    }
     state.currentUser = data.user;
     showToast('Conta criada com sucesso! Bem-vindo(a) às FINANÇAS SILVA.', 'success');
     switchView(true);
@@ -232,16 +271,18 @@ async function handleRegister(e) {
 
 async function handleLogout() {
   try {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    showToast('Você saiu do sistema.', 'info');
-    switchView(false);
+    await authFetch('/api/auth/logout', { method: 'POST' });
   } catch (err) {
     console.error(err);
+  } finally {
+    setAuthToken(null);
+    showToast('Você saiu do sistema.', 'info');
+    switchView(false);
   }
 }
 
 // ----------------------------------------------------
-// DADOS DO DASHBOARD
+// DADOS DO DASHBOARD E REATIVIDADE DINÂMICA
 // ----------------------------------------------------
 async function initializeDashboard() {
   await populateMonthDropdown();
@@ -257,7 +298,7 @@ async function fetchTransactions() {
     if (state.filters.month) params.append('month', state.filters.month);
     if (state.filters.sort) params.append('sort', state.filters.sort);
 
-    const res = await fetch(`/api/transactions?${params.toString()}`);
+    const res = await authFetch(`/api/transactions?${params.toString()}`);
     if (res.status === 401) {
       switchView(false);
       return;
@@ -268,7 +309,7 @@ async function fetchTransactions() {
     state.transactions = data;
     renderTransactionsTable();
   } catch (err) {
-    console.error(err);
+    console.error('Erro ao buscar transações:', err);
     showToast('Falha ao sincronizar suas transações.', 'error');
   }
 }
@@ -278,8 +319,11 @@ async function fetchSummary() {
     const params = new URLSearchParams();
     if (state.filters.month) params.append('month', state.filters.month);
 
-    const res = await fetch(`/api/summary?${params.toString()}`);
-    if (res.status === 401) return;
+    const res = await authFetch(`/api/summary?${params.toString()}`);
+    if (res.status === 401) {
+      switchView(false);
+      return;
+    }
     if (!res.ok) throw new Error('Erro no resumo');
 
     const summary = await res.json();
@@ -287,13 +331,13 @@ async function fetchSummary() {
     renderSummaryCards(summary);
     renderCharts(summary);
   } catch (err) {
-    console.error(err);
+    console.error('Erro no resumo silencioso:', err);
   }
 }
 
 async function populateMonthDropdown() {
   try {
-    const res = await fetch('/api/transactions');
+    const res = await authFetch('/api/transactions');
     if (!res.ok) return;
     const all = await res.json();
     const select = document.getElementById('filter-month');
@@ -321,11 +365,31 @@ async function populateMonthDropdown() {
   }
 }
 
+// Recarrega silenciosamente os dados sem reload de página
 async function reloadDashboardData() {
   await Promise.all([
     fetchTransactions(),
     fetchSummary()
   ]);
+}
+
+// Efeito de pulso nos cartões para confirmação visual instantânea
+function pulseSummaryCards() {
+  const elements = [
+    document.getElementById('total-balance'),
+    document.getElementById('total-income'),
+    document.getElementById('total-expense'),
+    document.getElementById('savings-rate')
+  ];
+
+  elements.forEach(el => {
+    if (el) {
+      el.classList.add('transition-transform', 'duration-300', 'scale-105');
+      setTimeout(() => {
+        el.classList.remove('scale-105');
+      }, 400);
+    }
+  });
 }
 
 // ----------------------------------------------------
@@ -498,8 +562,8 @@ function renderCategoryChart(expenseByCategory = {}) {
       datasets: [{
         data: values,
         backgroundColor: colors,
+        borderColor: '#1E293B',
         borderWidth: 2,
-        borderColor: '#1E293B', // Cor do cartão escuro
         hoverOffset: 4
       }]
     },
@@ -508,12 +572,12 @@ function renderCategoryChart(expenseByCategory = {}) {
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          position: 'bottom',
+          position: 'right',
           labels: {
-            boxWidth: 10,
+            boxWidth: 12,
             padding: 10,
-            color: '#94A3B8', // Cinza claro
-            font: { size: 10, family: "'Plus Jakarta Sans', sans-serif" }
+            color: '#CBD5E1',
+            font: { size: 11, family: "'Plus Jakarta Sans', sans-serif" }
           }
         },
         tooltip: {
@@ -524,7 +588,7 @@ function renderCategoryChart(expenseByCategory = {}) {
           borderWidth: 1,
           callbacks: {
             label: function(item) {
-              const val = item.raw;
+              const val = item.raw || 0;
               const total = values.reduce((a, b) => a + b, 0);
               const pct = total > 0 ? Math.round((val / total) * 100) : 0;
               return ` ${item.label}: ${formatCurrency(val)} (${pct}%)`;
@@ -532,7 +596,7 @@ function renderCategoryChart(expenseByCategory = {}) {
           }
         }
       },
-      cutout: '65%'
+      cutout: '68%'
     }
   });
 }
@@ -543,6 +607,7 @@ function renderMonthlyChart(monthlyHistory = {}) {
   if (!ctx) return;
 
   const months = Object.keys(monthlyHistory).sort();
+
   if (months.length === 0) {
     if (state.charts.monthly) {
       state.charts.monthly.destroy();
@@ -664,7 +729,7 @@ function openAddModal() {
 
 async function openEditModal(id) {
   try {
-    const res = await fetch(`/api/transactions/${id}`);
+    const res = await authFetch(`/api/transactions/${id}`);
     if (!res.ok) throw new Error('Transação não encontrada');
     const transaction = await res.json();
 
@@ -715,7 +780,7 @@ async function confirmDelete() {
   if (!state.deletingId) return;
 
   try {
-    const res = await fetch(`/api/transactions/${state.deletingId}`, {
+    const res = await authFetch(`/api/transactions/${state.deletingId}`, {
       method: 'DELETE'
     });
 
@@ -723,7 +788,11 @@ async function confirmDelete() {
 
     showToast('Transação excluída com sucesso!', 'success');
     closeDeleteModal();
+
+    // Reatividade silenciosa: atualiza dados e DOM imediatamente
     await reloadDashboardData();
+    await populateMonthDropdown();
+    pulseSummaryCards();
   } catch (err) {
     console.error(err);
     showToast('Erro ao excluir transação.', 'error');
@@ -731,7 +800,7 @@ async function confirmDelete() {
 }
 
 // ----------------------------------------------------
-// SALVAR OU ATUALIZAR TRANSAÇÃO
+// SALVAR OU ATUALIZAR TRANSAÇÃO (REATIVIDADE DINÂMICA)
 // ----------------------------------------------------
 async function handleTransactionSubmit(e) {
   e.preventDefault();
@@ -772,8 +841,13 @@ async function handleTransactionSubmit(e) {
   const url = isEditing ? `/api/transactions/${id}` : '/api/transactions';
   const method = isEditing ? 'PUT' : 'POST';
 
+  const btnSubmit = document.getElementById('btn-save-transaction');
+  const originalText = btnSubmit.innerHTML;
+  btnSubmit.disabled = true;
+  btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Salvando...</span>';
+
   try {
-    const res = await fetch(url, {
+    const res = await authFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -784,13 +858,26 @@ async function handleTransactionSubmit(e) {
       throw new Error(errData.error || 'Erro ao salvar transação');
     }
 
+    // 1. Fechar a modal imediatamente
     closeModal();
+
+    // 2. Notificação visual de sucesso
     showToast(isEditing ? 'Transação atualizada com sucesso!' : 'Lançamento adicionado às FINANÇAS SILVA!', 'success');
+
+    // 3. Reatividade Instantânea SEM recarregar página:
+    // Dispara nova busca silenciosa para atualizar saldos, despesas, receitas e tabela
     await reloadDashboardData();
     await populateMonthDropdown();
+
+    // 4. Feedback visual sutil de atualização nos cards
+    pulseSummaryCards();
+
   } catch (err) {
-    console.error(err);
+    console.error('Erro na gravação:', err);
     showToast(err.message || 'Erro ao processar lançamento.', 'error');
+  } finally {
+    btnSubmit.disabled = false;
+    btnSubmit.innerHTML = originalText;
   }
 }
 
@@ -799,11 +886,12 @@ async function handleTransactionSubmit(e) {
 // ----------------------------------------------------
 async function loadSampleData() {
   try {
-    const res = await fetch('/api/load-sample', { method: 'POST' });
+    const res = await authFetch('/api/load-sample', { method: 'POST' });
     if (!res.ok) throw new Error('Erro ao carregar exemplos');
     showToast('Lançamentos de exemplo adicionados com sucesso!', 'success');
     await reloadDashboardData();
     await populateMonthDropdown();
+    pulseSummaryCards();
   } catch (err) {
     console.error(err);
     showToast('Erro ao carregar exemplos.', 'error');
@@ -950,6 +1038,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     reloadDashboardData();
   });
+
+  // 15. Exportar CSV com passagem dinâmica do Token
+  const btnExport = document.getElementById('btn-export-csv');
+  if (btnExport) {
+    btnExport.addEventListener('click', (e) => {
+      const token = getAuthToken();
+      if (token) {
+        btnExport.href = `/api/export/csv?token=${encodeURIComponent(token)}`;
+      }
+    });
+  }
 
   // Fechar com ESC
   window.addEventListener('keydown', (e) => {

@@ -39,7 +39,7 @@ body::before {
   transform: translate(-50%, -50%);
   width: 450px;
   height: 450px;
-  background-image: url("logo fiunanças.jpeg");
+  background-image: url("/logo.jpeg");
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;

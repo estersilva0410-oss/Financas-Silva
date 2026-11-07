@@ -2,35 +2,38 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const session = require('express-session');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 const { db, initPromise } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Segredo JWT e Nome do Cookie (compatível com Vercel Serverless)
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || 'financas-silva-jwt-secret-2026';
+const TOKEN_COOKIE_NAME = 'financas_silva_token';
+
 // Middlewares essenciais
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-// Confiança no Proxy (necessário para Vercel e ambientes serverless HTTPS)
+// Confiança no Proxy (necessário para Vercel e proxies reversos HTTPS)
 app.set('trust proxy', 1);
 
-// Gerenciamento de Sessão de Usuário
-app.use(session({
-  name: 'financas_silva_sid',
-  secret: process.env.SESSION_SECRET || 'financas-silva-segredo-criptografico-2026',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: false, // Compatível com HTTP local e proxies da Vercel
-    sameSite: 'lax',
-    maxAge: 24 * 60 * 60 * 1000 // 24 horas de sessão
-  }
-}));
-
-// Servir arquivos estáticos do front-end
+// Servir arquivos estáticos do front-end com caminhos absolutos seguros
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Rotas explícitas de Favicon e Logo para garantir compatibilidade imediata no navegador
+app.get('/favicon.ico', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'favicon.ico'));
+});
+app.get('/logo.png', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'logo.png'));
+});
+app.get('/logo.jpeg', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'logo.jpeg'));
+});
 
 // Garantir que a inicialização do banco Turso terminou antes de processar rotas da API
 app.use(async (req, res, next) => {
@@ -43,19 +46,46 @@ app.use(async (req, res, next) => {
   }
 });
 
-// Middleware de Proteção de Rota (Autenticação Obrigatória)
+// Função auxiliar para extrair o token JWT de múltiplos canais (Header Bearer, Cookie, x-access-token, query)
+function extractToken(req) {
+  const authHeader = req.headers.authorization || req.headers.Authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.substring(7).trim();
+  }
+  if (req.cookies && req.cookies[TOKEN_COOKIE_NAME]) {
+    return req.cookies[TOKEN_COOKIE_NAME];
+  }
+  if (req.headers['x-access-token']) {
+    return req.headers['x-access-token'];
+  }
+  if (req.query && req.query.token) {
+    return req.query.token;
+  }
+  return null;
+}
+
+// Middleware de Proteção de Rota Baseado em JWT (Stateless - 100% Funcional na Vercel Serverless)
 function requireAuth(req, res, next) {
-  if (!req.session || !req.session.user) {
+  const token = extractToken(req);
+  if (!token) {
     return res.status(401).json({ error: 'Acesso não autorizado. Por favor, faça login.' });
   }
-  next();
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded; // { id, name, email }
+    req.session = { user: decoded }; // Mantém compatibilidade total
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Sessão expirada ou inválida. Por favor, faça login novamente.' });
+  }
 }
 
 // ----------------------------------------------------
 // ROTAS DE AUTENTICAÇÃO (CADASTRO, LOGIN, SESSÃO, LOGOUT)
 // ----------------------------------------------------
 
-// 1. Cadastro de Novo Usuário (com criptografia bcryptjs e persistência no Turso)
+// 1. Cadastro de Novo Usuário (com criptografia bcryptjs e JWT persistente)
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -101,15 +131,25 @@ app.post('/api/auth/register', async (req, res) => {
 
     const newUserId = Number(insertRes.lastInsertRowid);
 
-    // Iniciar sessão automaticamente após o cadastro
-    req.session.user = {
-      id: newUserId,
-      name: name.trim(),
-      email: cleanEmail
-    };
+    // Gerar Token JWT com validade de 30 dias
+    const token = jwt.sign(
+      { id: newUserId, name: name.trim(), email: cleanEmail },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    // Salvar em Cookie HTTP-only seguro
+    res.cookie(TOKEN_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
 
     res.status(201).json({
       message: 'Cadastro realizado com sucesso!',
+      token,
       user: {
         id: newUserId,
         name: name.trim(),
@@ -122,7 +162,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// 2. Login de Usuário (verificação de senha com bcryptjs e Turso)
+// 2. Login de Usuário (verificação de senha com bcryptjs e geração de JWT)
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -150,15 +190,25 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
     }
 
-    // Gerar sessão do usuário
-    req.session.user = {
-      id: Number(user.id),
-      name: user.name,
-      email: user.email
-    };
+    // Gerar Token JWT com validade de 30 dias
+    const token = jwt.sign(
+      { id: Number(user.id), name: user.name, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    // Salvar em Cookie HTTP-only seguro
+    res.cookie(TOKEN_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
 
     res.json({
       message: 'Login realizado com sucesso!',
+      token,
       user: {
         id: Number(user.id),
         name: user.name,
@@ -171,27 +221,28 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 3. Obter Usuário Logado da Sessão Atual
+// 3. Obter Usuário Logado da Sessão / Token Atual
 app.get('/api/auth/me', (req, res) => {
-  if (req.session && req.session.user) {
-    return res.json({ user: req.session.user });
+  const token = extractToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Nenhum usuário autenticado.' });
   }
-  res.status(401).json({ error: 'Nenhum usuário autenticado.' });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return res.json({ user: decoded, token });
+  } catch (err) {
+    return res.status(401).json({ error: 'Sessão expirada ou token inválido.' });
+  }
 });
 
-// 4. Logout (Encerrar Sessão)
+// 4. Logout (Encerrar Sessão e Limpar Cookie)
 app.post('/api/auth/logout', (req, res) => {
-  if (req.session) {
-    req.session.destroy(err => {
-      if (err) {
-        return res.status(500).json({ error: 'Erro ao encerrar sessão.' });
-      }
-      res.clearCookie('financas_silva_sid');
-      return res.json({ message: 'Sessão encerrada com sucesso.' });
-    });
-  } else {
-    res.json({ message: 'Sessão encerrada.' });
-  }
+  res.clearCookie(TOKEN_COOKIE_NAME, {
+    httpOnly: true,
+    path: '/'
+  });
+  res.json({ message: 'Sessão encerrada com sucesso.' });
 });
 
 // ----------------------------------------------------
@@ -201,7 +252,7 @@ app.post('/api/auth/logout', (req, res) => {
 // 5. Listar transações do usuário logado com filtros
 app.get('/api/transactions', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { type, category, search, month, sort } = req.query;
 
     let query = `
@@ -265,7 +316,7 @@ app.get('/api/transactions', requireAuth, async (req, res) => {
 // 6. Resumo Financeiro Consolidado (somente do usuário logado)
 app.get('/api/summary', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { month } = req.query;
 
     // Buscar todas as transações do usuário para histórico mensal
@@ -362,7 +413,7 @@ app.get('/api/summary', requireAuth, async (req, res) => {
 // 7. Obter transação por ID (verificando que pertence ao usuário)
 app.get('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const result = await db.execute({
       sql: `
         SELECT 
@@ -397,7 +448,7 @@ app.get('/api/transactions/:id', requireAuth, async (req, res) => {
 // 8. Criar nova transação para o usuário logado
 app.post('/api/transactions', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { description, amount, type, category, date, paymentMethod, notes } = req.body;
 
     if (!description || !description.trim()) {
@@ -460,7 +511,7 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
 // 9. Atualizar transação existente (apenas se pertencer ao usuário logado)
 app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { id } = req.params;
     const { description, amount, type, category, date, paymentMethod, notes } = req.body;
 
@@ -533,7 +584,7 @@ app.put('/api/transactions/:id', requireAuth, async (req, res) => {
 // 10. Deletar transação (apenas se pertencer ao usuário logado)
 app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { id } = req.params;
 
     const currentRes = await db.execute({
@@ -560,7 +611,7 @@ app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
 // 11. Exportar CSV (apenas transações do usuário logado)
 app.get('/api/export/csv', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const result = await db.execute({
       sql: 'SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, created_at DESC',
       args: [userId]
@@ -593,7 +644,7 @@ app.get('/api/export/csv', requireAuth, async (req, res) => {
 // 12. Carregar dados de exemplo na conta do usuário logado
 app.post('/api/load-sample', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
 
     const sampleData = [
       [crypto.randomUUID(), userId, 'Salário Silva', 4800.00, 'receita', 'Salário', '2026-11-01', 'PIX', 'Recebimento salarial', new Date().toISOString()],
@@ -622,7 +673,7 @@ app.post('/api/load-sample', requireAuth, async (req, res) => {
 // 13. Metas / Orçamentos por Categoria (Multi-usuário)
 app.get('/api/budgets', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
 
@@ -671,7 +722,7 @@ app.get('/api/budgets', requireAuth, async (req, res) => {
 // 14. Cadastrar ou Atualizar Meta
 app.post('/api/budgets', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { category, amount } = req.body;
 
     if (!category || !category.trim()) {
@@ -702,7 +753,7 @@ app.post('/api/budgets', requireAuth, async (req, res) => {
 // 15. Remover Meta
 app.delete('/api/budgets/:category', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     await db.execute({
       sql: 'DELETE FROM budgets WHERE user_id = ? AND category = ?',
       args: [userId, req.params.category]
@@ -717,7 +768,7 @@ app.delete('/api/budgets/:category', requireAuth, async (req, res) => {
 // 16. Atualizar Perfil do Usuário (Nome ou Senha)
 app.put('/api/auth/profile', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.user.id;
+    const userId = req.user.id;
     const { name, currentPassword, newPassword } = req.body;
 
     const userRes = await db.execute({
@@ -758,8 +809,26 @@ app.put('/api/auth/profile', requireAuth, async (req, res) => {
       });
     }
 
-    req.session.user.name = updatedName;
-    res.json({ message: 'Perfil atualizado com sucesso!', user: { id: userId, name: updatedName, email: user.email } });
+    // Gerar novo token JWT atualizado
+    const newToken = jwt.sign(
+      { id: userId, name: updatedName, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.cookie(TOKEN_COOKIE_NAME, newToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
+
+    res.json({
+      message: 'Perfil atualizado com sucesso!',
+      token: newToken,
+      user: { id: userId, name: updatedName, email: user.email }
+    });
   } catch (err) {
     console.error('Erro ao atualizar perfil:', err);
     res.status(500).json({ error: 'Erro ao atualizar dados do perfil.' });
@@ -775,7 +844,7 @@ app.use((req, res) => {
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`====================================================`);
-    console.log(`🏛️  FINANÇAS SILVA - Conectado ao Turso Cloud Database`);
+    console.log(`🏛️  FINANÇAS SILVA - Autenticação JWT Stateless (Vercel Ready)`);
     console.log(`🚀 Servidor rodando com sucesso na porta: ${PORT}`);
     console.log(`🌐 Acesse no seu navegador: http://localhost:${PORT}`);
     console.log(`====================================================`);

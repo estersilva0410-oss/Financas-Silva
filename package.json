@@ -1,7 +1,7 @@
 {
   "name": "financas-silva",
   "version": "2.0.0",
-  "description": "FINANÇAS SILVA - Controle Financeiro Pessoal Multi-usuário em Node.js, Express e SQLite",
+  "description": "FINANÇAS SILVA - Controle Financeiro Pessoal Multi-usuário em Node.js, Express e Turso (LibSQL)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,7 +14,8 @@
     "financas-silva",
     "express",
     "node",
-    "sqlite",
+    "turso",
+    "libsql",
     "multiusuario",
     "controle-financeiro"
   ],
@@ -23,7 +24,9 @@
   "dependencies": {
     "@libsql/client": "^0.18.0",
     "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
     "express": "^5.3.0",
-    "express-session": "^1.19.0"
+    "express-session": "^1.19.0",
+    "jsonwebtoken": "^9.0.3"
   }
 }

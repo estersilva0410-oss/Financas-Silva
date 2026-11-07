@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FINANÇAS SILVA - Controle Financeiro Multi-usuário</title>
   
+  <!-- Favicon / Ícone Oficial FINANÇAS SILVA -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="icon" type="image/jpeg" href="/logo.jpeg">
+  <link rel="apple-touch-icon" href="/logo.png">
+  
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   
@@ -52,7 +59,7 @@
       
       <!-- Cabeçalho do Card Auth com Logótipo Aumentado -->
       <div class="p-6 sm:p-8 text-center bg-gradient-to-b from-slate-900 to-[#1E293B] border-b border-slate-700/60 relative">
-        <img src="logo fiunanças.jpeg" alt="Logo FINANÇAS SILVA" class="h-20 sm:h-24 w-auto mx-auto object-contain mb-3 rounded-2xl shadow-xl shadow-black/50 border border-slate-700/60">
+        <img src="/logo.jpeg" alt="Logo FINANÇAS SILVA" class="h-20 sm:h-24 w-auto mx-auto object-contain mb-3 rounded-2xl shadow-xl shadow-black/50 border border-slate-700/60">
         <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">FINANÇAS SILVA</h1>
         <p class="text-xs sm:text-sm text-slate-400 mt-1">Gestão Financeira Pessoal &bull; Multi-usuário</p>
       </div>
@@ -170,7 +177,7 @@
           
           <!-- Logótipo no Cabeçalho (Imagem aumentada para ~75px a 80px com texto destacado) -->
           <div class="flex items-center gap-3 sm:gap-4 my-1">
-            <img src="logo fiunanças.jpeg" alt="Logo FINANÇAS SILVA" class="header-logo h-[70px] sm:h-[75px] md:h-[80px] w-auto object-contain rounded-xl border border-slate-700/70 shadow-md">
+            <img src="/logo.jpeg" alt="Logo FINANÇAS SILVA" class="header-logo h-[70px] sm:h-[75px] md:h-[80px] w-auto object-contain rounded-xl border border-slate-700/70 shadow-md">
             <div class="flex flex-col justify-center">
               <div class="flex items-center gap-2">
                 <span class="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight text-white leading-tight">FINANÇAS SILVA</span>
@@ -184,7 +191,7 @@
           <div class="flex items-center gap-2 sm:gap-4">
             
             <!-- Botão Exportar CSV -->
-            <a href="/api/export/csv" download title="Exportar minhas transações em CSV" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-[#0F172A] hover:bg-slate-800 border border-slate-700 rounded-xl transition-all duration-200">
+            <a href="/api/export/csv" id="btn-export-csv" download title="Exportar minhas transações em CSV" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-[#0F172A] hover:bg-slate-800 border border-slate-700 rounded-xl transition-all duration-200">
               <i class="fa-solid fa-file-csv text-emerald-400 text-sm"></i>
               <span class="hidden md:inline">Exportar CSV</span>
             </a>
@@ -301,6 +308,37 @@
           </div>
         </div>
 
+      </section>
+
+      <!-- Destaques / Insights Financeiros do Mês -->
+      <section id="insights-bar" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="dark-card px-4 py-3 flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/20">
+            <i class="fa-solid fa-arrow-trend-up text-xs"></i>
+          </div>
+          <div class="min-w-0 flex-1">
+            <span class="text-[11px] text-slate-400 font-medium block">Maior Entrada</span>
+            <span id="insight-highest-income" class="text-xs font-bold text-emerald-400 truncate block">Nenhuma entrada</span>
+          </div>
+        </div>
+        <div class="dark-card px-4 py-3 flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-400 flex items-center justify-center shrink-0 border border-rose-500/20">
+            <i class="fa-solid fa-arrow-trend-down text-xs"></i>
+          </div>
+          <div class="min-w-0 flex-1">
+            <span class="text-[11px] text-slate-400 font-medium block">Maior Saída</span>
+            <span id="insight-highest-expense" class="text-xs font-bold text-rose-400 truncate block">Nenhuma saída</span>
+          </div>
+        </div>
+        <div class="dark-card px-4 py-3 flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/20">
+            <i class="fa-solid fa-calendar-day text-xs"></i>
+          </div>
+          <div class="min-w-0 flex-1">
+            <span class="text-[11px] text-slate-400 font-medium block">Média de Gasto Diário</span>
+            <span id="insight-daily-avg" class="text-xs font-bold text-white truncate block">R$ 0,00 / dia</span>
+          </div>
+        </div>
       </section>
 
       <!-- Barra de Filtros e Busca (Dark Mode) -->

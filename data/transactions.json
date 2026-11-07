@@ -1,0 +1,101 @@
+[
+  {
+    "id": "1",
+    "description": "Salário Mensal",
+    "amount": 4500,
+    "type": "receita",
+    "category": "Salário",
+    "date": "2026-11-01",
+    "paymentMethod": "PIX",
+    "notes": "Pagamento mensal da empresa",
+    "createdAt": "2026-11-01T08:00:00.000Z"
+  },
+  {
+    "id": "2",
+    "description": "Aluguel e Condomínio",
+    "amount": 1250,
+    "type": "despesa",
+    "category": "Moradia",
+    "date": "2026-11-02",
+    "paymentMethod": "Boleto",
+    "notes": "Vencimento dia 05",
+    "createdAt": "2026-11-02T10:15:00.000Z"
+  },
+  {
+    "id": "3",
+    "description": "Supermercado Mensal",
+    "amount": 680.5,
+    "type": "despesa",
+    "category": "Alimentação",
+    "date": "2026-11-03",
+    "paymentMethod": "Cartão de Crédito",
+    "notes": "Compras do mês no Atacadão",
+    "createdAt": "2026-11-03T14:30:00.000Z"
+  },
+  {
+    "id": "4",
+    "description": "Projeto Freelance Website",
+    "amount": 1200,
+    "type": "receita",
+    "category": "Serviços",
+    "date": "2026-11-04",
+    "paymentMethod": "PIX",
+    "notes": "Primeira parcela da entrega",
+    "createdAt": "2026-11-04T16:00:00.000Z"
+  },
+  {
+    "id": "5",
+    "description": "Conta de Luz (Energia)",
+    "amount": 185.4,
+    "type": "despesa",
+    "category": "Moradia",
+    "date": "2026-11-04",
+    "paymentMethod": "Boleto",
+    "notes": "Consumo de Outubro",
+    "createdAt": "2026-11-04T18:20:00.000Z"
+  },
+  {
+    "id": "6",
+    "description": "Abastecimento Carro (Gasolina)",
+    "amount": 220,
+    "type": "despesa",
+    "category": "Transporte",
+    "date": "2026-11-05",
+    "paymentMethod": "Cartão de Débito",
+    "notes": "Tanque cheio",
+    "createdAt": "2026-11-05T09:45:00.000Z"
+  },
+  {
+    "id": "7",
+    "description": "Farmácia e Medicamentos",
+    "amount": 94.8,
+    "type": "despesa",
+    "category": "Saúde",
+    "date": "2026-11-05",
+    "paymentMethod": "Cartão de Débito",
+    "notes": "Vitaminas e remédios",
+    "createdAt": "2026-11-05T11:10:00.000Z"
+  },
+  {
+    "id": "8",
+    "description": "Jantar em Família",
+    "amount": 160,
+    "type": "despesa",
+    "category": "Lazer",
+    "date": "2026-11-05",
+    "paymentMethod": "Cartão de Crédito",
+    "notes": "Pizzaria",
+    "createdAt": "2026-11-05T20:40:00.000Z"
+  },
+  {
+    "id": "9",
+    "description": "Internet Fibra Óptica",
+    "amount": 119.9,
+    "type": "despesa",
+    "category": "Moradia",
+    "date": "2026-11-06",
+    "paymentMethod": "Boleto",
+    "notes": "Plano 500MB",
+    "createdAt": "2026-11-06T08:30:00.000Z"
+  }
+]
