@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
-const db = require('./db');
+const { db, initPromise } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,6 +32,17 @@ app.use(session({
 // Servir arquivos estáticos do front-end
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Garantir que a inicialização do banco Turso terminou antes de processar rotas da API
+app.use(async (req, res, next) => {
+  try {
+    await initPromise;
+    next();
+  } catch (err) {
+    console.error('Erro na inicialização do banco Turso:', err);
+    res.status(500).json({ error: 'Erro de conexão com o banco de dados na nuvem.' });
+  }
+});
+
 // Middleware de Proteção de Rota (Autenticação Obrigatória)
 function requireAuth(req, res, next) {
   if (!req.session || !req.session.user) {
@@ -44,8 +55,8 @@ function requireAuth(req, res, next) {
 // ROTAS DE AUTENTICAÇÃO (CADASTRO, LOGIN, SESSÃO, LOGOUT)
 // ----------------------------------------------------
 
-// 1. Cadastro de Novo Usuário (com criptografia bcryptjs)
-app.post('/api/auth/register', (req, res) => {
+// 1. Cadastro de Novo Usuário (com criptografia bcryptjs e persistência no Turso)
+app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
@@ -68,9 +79,13 @@ app.post('/api/auth/register', (req, res) => {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // Verificar se o e-mail já está cadastrado
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(cleanEmail);
-    if (existing) {
+    // Verificar se o e-mail já está cadastrado no Turso
+    const existing = await db.execute({
+      sql: 'SELECT id FROM users WHERE email = ?',
+      args: [cleanEmail]
+    });
+
+    if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'Este e-mail já está em uso por outro usuário.' });
     }
 
@@ -78,13 +93,13 @@ app.post('/api/auth/register', (req, res) => {
     const salt = bcrypt.genSaltSync(10);
     const hashedPassword = bcrypt.hashSync(password, salt);
 
-    // Inserir usuário no SQLite
-    const insertStmt = db.prepare(`
-      INSERT INTO users (name, email, password)
-      VALUES (?, ?, ?)
-    `);
-    const info = insertStmt.run(name.trim(), cleanEmail, hashedPassword);
-    const newUserId = Number(info.lastInsertRowid);
+    // Inserir usuário no Turso
+    const insertRes = await db.execute({
+      sql: 'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
+      args: [name.trim(), cleanEmail, hashedPassword]
+    });
+
+    const newUserId = Number(insertRes.lastInsertRowid);
 
     // Iniciar sessão automaticamente após o cadastro
     req.session.user = {
@@ -107,8 +122,8 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-// 2. Login de Usuário (verificação de senha com bcryptjs)
-app.post('/api/auth/login', (req, res) => {
+// 2. Login de Usuário (verificação de senha com bcryptjs e Turso)
+app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -118,21 +133,26 @@ app.post('/api/auth/login', (req, res) => {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // Buscar usuário no SQLite
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+    // Buscar usuário no Turso
+    const userRes = await db.execute({
+      sql: 'SELECT * FROM users WHERE email = ?',
+      args: [cleanEmail]
+    });
+
+    const user = userRes.rows[0];
     if (!user) {
       return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
     }
 
     // Comparar senha com o hash criptografado
-    const match = bcrypt.compareSync(password, user.password);
+    const match = bcrypt.compareSync(password, String(user.password));
     if (!match) {
       return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
     }
 
     // Gerar sessão do usuário
     req.session.user = {
-      id: user.id,
+      id: Number(user.id),
       name: user.name,
       email: user.email
     };
@@ -140,7 +160,7 @@ app.post('/api/auth/login', (req, res) => {
     res.json({
       message: 'Login realizado com sucesso!',
       user: {
-        id: user.id,
+        id: Number(user.id),
         name: user.name,
         email: user.email
       }
@@ -179,7 +199,7 @@ app.post('/api/auth/logout', (req, res) => {
 // ----------------------------------------------------
 
 // 5. Listar transações do usuário logado com filtros
-app.get('/api/transactions', requireAuth, (req, res) => {
+app.get('/api/transactions', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { type, category, search, month, sort } = req.query;
@@ -234,8 +254,8 @@ app.get('/api/transactions', requireAuth, (req, res) => {
       query += ` ORDER BY date DESC, created_at DESC`;
     }
 
-    const transactions = db.prepare(query).all(...params);
-    res.json(transactions);
+    const result = await db.execute({ sql: query, args: params });
+    res.json(result.rows);
   } catch (err) {
     console.error('Erro ao listar transações:', err);
     res.status(500).json({ error: 'Erro ao buscar transações.' });
@@ -243,17 +263,17 @@ app.get('/api/transactions', requireAuth, (req, res) => {
 });
 
 // 6. Resumo Financeiro Consolidado (somente do usuário logado)
-app.get('/api/summary', requireAuth, (req, res) => {
+app.get('/api/summary', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { month } = req.query;
 
     // Buscar todas as transações do usuário para histórico mensal
-    const allUserTxs = db.prepare(`
-      SELECT amount, type, category, date
-      FROM transactions
-      WHERE user_id = ?
-    `).all(userId);
+    const allUserTxsRes = await db.execute({
+      sql: `SELECT amount, type, category, date, description FROM transactions WHERE user_id = ?`,
+      args: [userId]
+    });
+    const allUserTxs = allUserTxsRes.rows;
 
     const monthlyHistory = {};
     allUserTxs.forEach(t => {
@@ -340,37 +360,42 @@ app.get('/api/summary', requireAuth, (req, res) => {
 });
 
 // 7. Obter transação por ID (verificando que pertence ao usuário)
-app.get('/api/transactions/:id', requireAuth, (req, res) => {
+app.get('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
-    const tx = db.prepare(`
-      SELECT 
-        id, 
-        user_id as userId, 
-        description, 
-        amount, 
-        type, 
-        category, 
-        date, 
-        payment_method as paymentMethod, 
-        notes, 
-        created_at as createdAt 
-      FROM transactions 
-      WHERE id = ? AND user_id = ?
-    `).get(req.params.id, userId);
+    const result = await db.execute({
+      sql: `
+        SELECT 
+          id, 
+          user_id as userId, 
+          description, 
+          amount, 
+          type, 
+          category, 
+          date, 
+          payment_method as paymentMethod, 
+          notes, 
+          created_at as createdAt 
+        FROM transactions 
+        WHERE id = ? AND user_id = ?
+      `,
+      args: [req.params.id, userId]
+    });
 
+    const tx = result.rows[0];
     if (!tx) {
       return res.status(404).json({ error: 'Transação não encontrada ou você não tem permissão.' });
     }
 
     res.json(tx);
   } catch (err) {
+    console.error('Erro ao carregar transação:', err);
     res.status(500).json({ error: 'Erro ao carregar transação.' });
   }
 });
 
 // 8. Criar nova transação para o usuário logado
-app.post('/api/transactions', requireAuth, (req, res) => {
+app.post('/api/transactions', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { description, amount, type, category, date, paymentMethod, notes } = req.body;
@@ -395,23 +420,24 @@ app.post('/api/transactions', requireAuth, (req, res) => {
     const cleanNotes = notes ? notes.trim() : '';
     const createdAt = new Date().toISOString();
 
-    const insertStmt = db.prepare(`
-      INSERT INTO transactions (id, user_id, description, amount, type, category, date, payment_method, notes, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    insertStmt.run(
-      newId,
-      userId,
-      description.trim(),
-      Number(numAmount.toFixed(2)),
-      type,
-      cleanCategory,
-      cleanDate,
-      cleanPayment,
-      cleanNotes,
-      createdAt
-    );
+    await db.execute({
+      sql: `
+        INSERT INTO transactions (id, user_id, description, amount, type, category, date, payment_method, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        newId,
+        userId,
+        description.trim(),
+        Number(numAmount.toFixed(2)),
+        type,
+        cleanCategory,
+        cleanDate,
+        cleanPayment,
+        cleanNotes,
+        createdAt
+      ]
+    });
 
     res.status(201).json({
       id: newId,
@@ -432,14 +458,19 @@ app.post('/api/transactions', requireAuth, (req, res) => {
 });
 
 // 9. Atualizar transação existente (apenas se pertencer ao usuário logado)
-app.put('/api/transactions/:id', requireAuth, (req, res) => {
+app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { id } = req.params;
     const { description, amount, type, category, date, paymentMethod, notes } = req.body;
 
     // Verificar existência e propriedade
-    const current = db.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ?').get(id, userId);
+    const currentRes = await db.execute({
+      sql: 'SELECT * FROM transactions WHERE id = ? AND user_id = ?',
+      args: [id, userId]
+    });
+    const current = currentRes.rows[0];
+
     if (!current) {
       return res.status(404).json({ error: 'Transação não encontrada ou acesso não autorizado.' });
     }
@@ -463,23 +494,24 @@ app.put('/api/transactions/:id', requireAuth, (req, res) => {
     const updatedPayment = paymentMethod !== undefined ? paymentMethod.trim() : current.payment_method;
     const updatedNotes = notes !== undefined ? notes.trim() : current.notes;
 
-    const updateStmt = db.prepare(`
-      UPDATE transactions
-      SET description = ?, amount = ?, type = ?, category = ?, date = ?, payment_method = ?, notes = ?
-      WHERE id = ? AND user_id = ?
-    `);
-
-    updateStmt.run(
-      updatedDesc,
-      Number(numAmount.toFixed(2)),
-      updatedType,
-      updatedCategory,
-      updatedDate,
-      updatedPayment,
-      updatedNotes,
-      id,
-      userId
-    );
+    await db.execute({
+      sql: `
+        UPDATE transactions
+        SET description = ?, amount = ?, type = ?, category = ?, date = ?, payment_method = ?, notes = ?
+        WHERE id = ? AND user_id = ?
+      `,
+      args: [
+        updatedDesc,
+        Number(numAmount.toFixed(2)),
+        updatedType,
+        updatedCategory,
+        updatedDate,
+        updatedPayment,
+        updatedNotes,
+        id,
+        userId
+      ]
+    });
 
     res.json({
       id,
@@ -499,17 +531,24 @@ app.put('/api/transactions/:id', requireAuth, (req, res) => {
 });
 
 // 10. Deletar transação (apenas se pertencer ao usuário logado)
-app.delete('/api/transactions/:id', requireAuth, (req, res) => {
+app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { id } = req.params;
 
-    const current = db.prepare('SELECT id FROM transactions WHERE id = ? AND user_id = ?').get(id, userId);
-    if (!current) {
+    const currentRes = await db.execute({
+      sql: 'SELECT id FROM transactions WHERE id = ? AND user_id = ?',
+      args: [id, userId]
+    });
+
+    if (currentRes.rows.length === 0) {
       return res.status(404).json({ error: 'Transação não encontrada ou você não tem permissão.' });
     }
 
-    db.prepare('DELETE FROM transactions WHERE id = ? AND user_id = ?').run(id, userId);
+    await db.execute({
+      sql: 'DELETE FROM transactions WHERE id = ? AND user_id = ?',
+      args: [id, userId]
+    });
 
     res.json({ message: 'Transação excluída com sucesso!' });
   } catch (err) {
@@ -519,12 +558,14 @@ app.delete('/api/transactions/:id', requireAuth, (req, res) => {
 });
 
 // 11. Exportar CSV (apenas transações do usuário logado)
-app.get('/api/export/csv', requireAuth, (req, res) => {
+app.get('/api/export/csv', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
-    const items = db.prepare(`
-      SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, created_at DESC
-    `).all(userId);
+    const result = await db.execute({
+      sql: 'SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, created_at DESC',
+      args: [userId]
+    });
+    const items = result.rows;
 
     const headers = ['ID', 'Data', 'Tipo', 'Descrição', 'Categoria', 'Forma de Pagamento', 'Valor (R$)', 'Observações'];
     const rows = items.map(t => [
@@ -550,7 +591,7 @@ app.get('/api/export/csv', requireAuth, (req, res) => {
 });
 
 // 12. Carregar dados de exemplo na conta do usuário logado
-app.post('/api/load-sample', requireAuth, (req, res) => {
+app.post('/api/load-sample', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
 
@@ -563,13 +604,12 @@ app.post('/api/load-sample', requireAuth, (req, res) => {
       [crypto.randomUUID(), userId, 'Combustível Automóvel', 200.00, 'despesa', 'Transporte', '2026-11-05', 'Cartão de Débito', 'Gasolina', new Date().toISOString()]
     ];
 
-    const stmt = db.prepare(`
-      INSERT INTO transactions (id, user_id, description, amount, type, category, date, payment_method, notes, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
     for (const row of sampleData) {
-      stmt.run(...row);
+      await db.execute({
+        sql: `INSERT INTO transactions (id, user_id, description, amount, type, category, date, payment_method, notes, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: row
+      });
     }
 
     res.json({ message: 'Dados de exemplo adicionados com sucesso!', count: sampleData.length });
@@ -580,20 +620,28 @@ app.post('/api/load-sample', requireAuth, (req, res) => {
 });
 
 // 13. Metas / Orçamentos por Categoria (Multi-usuário)
-app.get('/api/budgets', requireAuth, (req, res) => {
+app.get('/api/budgets', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { month } = req.query;
     const targetMonth = month || new Date().toISOString().substring(0, 7);
 
-    const budgets = db.prepare('SELECT category, amount FROM budgets WHERE user_id = ?').all(userId);
+    const budgetsRes = await db.execute({
+      sql: 'SELECT category, amount FROM budgets WHERE user_id = ?',
+      args: [userId]
+    });
+    const budgets = budgetsRes.rows;
 
-    const expenses = db.prepare(`
-      SELECT category, SUM(amount) as spent
-      FROM transactions
-      WHERE user_id = ? AND type = 'despesa' AND date LIKE ?
-      GROUP BY category
-    `).all(userId, `${targetMonth}%`);
+    const expensesRes = await db.execute({
+      sql: `
+        SELECT category, SUM(amount) as spent
+        FROM transactions
+        WHERE user_id = ? AND type = 'despesa' AND date LIKE ?
+        GROUP BY category
+      `,
+      args: [userId, `${targetMonth}%`]
+    });
+    const expenses = expensesRes.rows;
 
     const spentMap = {};
     expenses.forEach(e => {
@@ -621,7 +669,7 @@ app.get('/api/budgets', requireAuth, (req, res) => {
 });
 
 // 14. Cadastrar ou Atualizar Meta
-app.post('/api/budgets', requireAuth, (req, res) => {
+app.post('/api/budgets', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { category, amount } = req.body;
@@ -635,12 +683,14 @@ app.post('/api/budgets', requireAuth, (req, res) => {
       return res.status(400).json({ error: 'Informe um valor limite válido maior que zero.' });
     }
 
-    const stmt = db.prepare(`
-      INSERT INTO budgets (user_id, category, amount)
-      VALUES (?, ?, ?)
-      ON CONFLICT(user_id, category) DO UPDATE SET amount = excluded.amount
-    `);
-    stmt.run(userId, category.trim(), Number(num.toFixed(2)));
+    await db.execute({
+      sql: `
+        INSERT INTO budgets (user_id, category, amount)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id, category) DO UPDATE SET amount = excluded.amount
+      `,
+      args: [userId, category.trim(), Number(num.toFixed(2))]
+    });
 
     res.json({ message: 'Meta salva com sucesso!', category: category.trim(), amount: Number(num.toFixed(2)) });
   } catch (err) {
@@ -650,23 +700,32 @@ app.post('/api/budgets', requireAuth, (req, res) => {
 });
 
 // 15. Remover Meta
-app.delete('/api/budgets/:category', requireAuth, (req, res) => {
+app.delete('/api/budgets/:category', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
-    db.prepare('DELETE FROM budgets WHERE user_id = ? AND category = ?').run(userId, req.params.category);
+    await db.execute({
+      sql: 'DELETE FROM budgets WHERE user_id = ? AND category = ?',
+      args: [userId, req.params.category]
+    });
     res.json({ message: 'Meta removida com sucesso!' });
   } catch (err) {
+    console.error('Erro ao remover meta:', err);
     res.status(500).json({ error: 'Erro ao remover meta.' });
   }
 });
 
 // 16. Atualizar Perfil do Usuário (Nome ou Senha)
-app.put('/api/auth/profile', requireAuth, (req, res) => {
+app.put('/api/auth/profile', requireAuth, async (req, res) => {
   try {
     const userId = req.session.user.id;
     const { name, currentPassword, newPassword } = req.body;
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    const userRes = await db.execute({
+      sql: 'SELECT * FROM users WHERE id = ?',
+      args: [userId]
+    });
+    const user = userRes.rows[0];
+
     if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
 
     let updatedName = user.name;
@@ -678,7 +737,7 @@ app.put('/api/auth/profile', requireAuth, (req, res) => {
       if (!currentPassword) {
         return res.status(400).json({ error: 'Informe sua senha atual para definir uma nova.' });
       }
-      const match = bcrypt.compareSync(currentPassword, user.password);
+      const match = bcrypt.compareSync(currentPassword, String(user.password));
       if (!match) {
         return res.status(400).json({ error: 'Senha atual incorreta.' });
       }
@@ -687,9 +746,16 @@ app.put('/api/auth/profile', requireAuth, (req, res) => {
       }
       const salt = bcrypt.genSaltSync(10);
       const hashed = bcrypt.hashSync(newPassword, salt);
-      db.prepare('UPDATE users SET name = ?, password = ? WHERE id = ?').run(updatedName, hashed, userId);
+
+      await db.execute({
+        sql: 'UPDATE users SET name = ?, password = ? WHERE id = ?',
+        args: [updatedName, hashed, userId]
+      });
     } else {
-      db.prepare('UPDATE users SET name = ? WHERE id = ?').run(updatedName, userId);
+      await db.execute({
+        sql: 'UPDATE users SET name = ? WHERE id = ?',
+        args: [updatedName, userId]
+      });
     }
 
     req.session.user.name = updatedName;
@@ -709,7 +775,7 @@ app.use((req, res) => {
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`====================================================`);
-    console.log(`🏛️  FINANÇAS SILVA - Sistema Multi-usuário SQLite`);
+    console.log(`🏛️  FINANÇAS SILVA - Conectado ao Turso Cloud Database`);
     console.log(`🚀 Servidor rodando com sucesso na porta: ${PORT}`);
     console.log(`🌐 Acesse no seu navegador: http://localhost:${PORT}`);
     console.log(`====================================================`);
